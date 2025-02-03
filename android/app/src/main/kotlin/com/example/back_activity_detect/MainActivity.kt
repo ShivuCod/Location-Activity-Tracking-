@@ -538,14 +538,15 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "startLocationService" -> {
-                    startLocationService()
+
+                        startLocationService()
                     result.success(null)
                 }
                 "stopLocationService" -> {
                     stopLocationService()
                     result.success(null)
                 }
-                else -> result.notImplemented()
+
             }
         }
 
@@ -608,21 +609,36 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun startLocationService() {
-        Log.d(TAG, "Starting location service")
-        val serviceIntent = Intent(this, LocationService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-            Log.d(TAG, "Starting location service in foreground")
-        } else {
-            startService(serviceIntent)
+    private fun startLocationService(): Boolean {
+        try {
+            val serviceIntent = Intent(this, LocationService::class.java)
+
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start location service", e)
+            return false
         }
     }
 
     private fun stopLocationService() {
-        Log.d(TAG, "Stopping location service")
-        val serviceIntent = Intent(this, LocationService::class.java)
-        stopService(serviceIntent)
+        try {
+            // Update service state
+            getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("flutter.service_should_run", false)
+                .apply()
+                
+            val serviceIntent = Intent(this, LocationService::class.java)
+            stopService(serviceIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop location service", e)
+        }
     }
 
     private fun checkPermissions(): Boolean {

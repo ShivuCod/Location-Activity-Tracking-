@@ -14,6 +14,10 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Location Activity Tracking',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
       home: const MyHomePage(),
     );
   }
@@ -27,138 +31,47 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  static const methodChannel = MethodChannel('com.test');
-  static const locationEventChannel = EventChannel('com.test/location_updates');
-  static const activityEventChannel = EventChannel('com.test/activity_updates');
-
-  String locationInfo = 'No location updates';
-  String activityInfo = 'No activity detected';
+  static const platform = MethodChannel('com.test');
   bool isServiceRunning = false;
-  StreamSubscription? locationSubscription;
-  StreamSubscription? activitySubscription;
 
-  @override
-  void initState() {
-    super.initState();
-  }
+  // Credentials
+  final Map<String, dynamic> credentials = {
+    "orgId": 386,
+    "empId": 8,
+    "accessToken":
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1lIjoiODIwMDI3MzIyNCIsImp0aSI6ImNiMmUyNmFmLTM0NmQtNDYxNy05MDRjLWUxZWFjZTM1MmVhYiIsImh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vd3MvMjAwOC8wNi9pZGVudGl0eS9jbGFpbXMvcm9sZSI6IlVzZXIiLCJleHAiOjE3Mzk0NDE5MzEsImlzcyI6Imh0dHBzOi8vaHVtYW5lYy5haS8iLCJhdWQiOiJodHRwOi8vMTI3LjAuMC4xOjgwMDAvIn0.-yOMq89tVvxL5esH7Dy9wd5FVKkaBAOwTLCTCrCPGcY",
+    "refreshToken": "vOshkO5pEQsNDgXIzPpLvTrOeMPd4I/o5EtfkiipPpU=",
+    "img": "",
+    "name": "Faizal Khalifa",
+    "host": "https://api.geo.humanec.ai"
+  };
 
-  void _setupStreams() {
+  Future<void> toggleService() async {
     try {
-      locationSubscription?.cancel();
-      activitySubscription?.cancel();
-
-      locationSubscription =
-          locationEventChannel.receiveBroadcastStream().listen((dynamic event) {
+      if (!isServiceRunning) {
+        await platform.invokeMethod('userData',credentials);
+        final bool result = await platform.invokeMethod('startLocationService');
         setState(() {
-          if (event is Map && event.containsKey('error')) {
-            locationInfo = 'Error: ${event['error']}';
-            debugPrint('Location error: ${event['error']}');
-          } else {
-            locationInfo =
-                'Location: ${event['latitude']}, ${event['longitude']}\n'
-                'Accuracy: ${event['accuracy']} meters\n'
-                'Speed: ${event['speed']} m/s\n'
-                'Time: ${DateTime.fromMillisecondsSinceEpoch(event['time'] as int)}';
-            debugPrint('Location update received: $event');
-          }
+          isServiceRunning = result;
         });
-      }, onError: (dynamic error) {
-        setState(() {
-          locationInfo = 'Error receiving location updates: $error';
-        });
-        debugPrint('Error in location stream: $error');
-      });
-
-      activitySubscription =
-          activityEventChannel.receiveBroadcastStream().listen((dynamic event) {
-        setState(() {
-          activityInfo = 'Activity: ${event['activityType']}\n'
-              'Time: ${DateTime.fromMillisecondsSinceEpoch(event['time'] as int)}';
-        });
-        debugPrint('Activity update received: $event');
-      }, onError: (dynamic error) {
-        setState(() {
-          activityInfo = 'Error receiving activity updates: $error';
-        });
-        debugPrint('Error in activity stream: $error');
-      });
-    } catch (e) {
-      debugPrint('Error setting up streams: $e');
-      setState(() {
-        locationInfo = 'Failed to set up location updates';
-        activityInfo = 'Failed to set up activity updates';
-      });
-    }
-  }
-
-  Future<void> _startLocationService() async {
-    try {
-      if (await _requestPermissions()) {
-        await methodChannel.invokeMethod('startLocationService');
-        setState(() {
-          isServiceRunning = true;
-          locationInfo = 'Waiting for location updates...';
-          activityInfo = 'Waiting for activity updates...';
-        });
-        _setupStreams();
-        debugPrint('Location service started successfully');
       } else {
+        await platform.invokeMethod('stopLocationService');
         setState(() {
-          locationInfo = 'Failed to get required permissions';
+          isServiceRunning = false;
         });
-        debugPrint('Failed to get required permissions');
       }
     } on PlatformException catch (e) {
-      debugPrint("Failed to start service: ${e.message}");
-      setState(() {
-        locationInfo = 'Failed to start location service: ${e.message}';
-      });
+      debugPrint("Failed to toggle service: '${e.message}'.");
     }
   }
 
-  Future<void> _stopLocationService() async {
-    try {
-      await methodChannel.invokeMethod('stopLocationService');
-      setState(() {
-        isServiceRunning = false;
-        locationInfo = 'Location tracking stopped';
-        activityInfo = 'Activity tracking stopped';
-      });
-      locationSubscription?.cancel();
-      activitySubscription?.cancel();
-    } on PlatformException catch (e) {
-      debugPrint("Failed to stop service: ${e.message}");
-      setState(() {
-        locationInfo = 'Failed to stop service: ${e.message}';
-      });
-    }
-  }
-
-  Future<void> _setUserData() async {
-    try {
-      await methodChannel.invokeMethod('userData', {
-        "orgId": 386,
-        "empId": 8,
-        "accessToken":
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1lIjoiODIwMDI3MzIyNCIsImp0aSI6ImNiMmUyNmFmLTM0NmQtNDYxNy05MDRjLWUxZWFjZTM1MmVhYiIsImh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vd3MvMjAwOC8wNi9pZGVudGl0eS9jbGFpbXMvcm9sZSI6IlVzZXIiLCJleHAiOjE3Mzk0NDE5MzEsImlzcyI6Imh0dHBzOi8vaHVtYW5lYy5haS8iLCJhdWQiOiJodHRwOi8vMTI3LjAuMC4xOjgwMDAvIn0.-yOMq89tVvxL5esH7Dy9wd5FVKkaBAOwTLCTCrCPGcY",
-        "refreshToken":"vOshkO5pEQsNDgXIzPpLvTrOeMPd4I/o5EtfkiipPpU=",
-        "img": "",
-        "name": "Faizal Khalifa",
-        "host": "https://api.geo.humanec.ai"
-      });
-      debugPrint('User data set successfully');
-    } catch (e) {
-      debugPrint("Failed to set user data: ${e.toString()}");
-    }
-  }
-
-  Future<bool> _requestPermissions() async {
+  Future<void> _requestPermissions() async {
     // First check if location services are enabled
     if (!await Permission.locationWhenInUse.serviceStatus.isEnabled) {
       setState(() {
-        locationInfo = 'Please enable location services in settings';
+        isServiceRunning = false;
       });
-      return false;
+      return;
     }
 
     // Request notification permission for Android 13 and above
@@ -166,9 +79,9 @@ class _MyHomePageState extends State<MyHomePage> {
       final notificationStatus = await Permission.notification.request();
       if (!notificationStatus.isGranted) {
         setState(() {
-          locationInfo = 'Notification permission is required';
+          isServiceRunning = false;
         });
-        return false;
+        return;
       }
     }
 
@@ -177,9 +90,9 @@ class _MyHomePageState extends State<MyHomePage> {
       final activityStatus = await Permission.activityRecognition.request();
       if (!activityStatus.isGranted) {
         setState(() {
-          activityInfo = 'Activity recognition permission is required';
+          isServiceRunning = false;
         });
-        return false;
+        return;
       }
     }
 
@@ -187,18 +100,18 @@ class _MyHomePageState extends State<MyHomePage> {
     final locationStatus = await Permission.locationWhenInUse.request();
     if (!locationStatus.isGranted) {
       setState(() {
-        locationInfo = 'Location permission is required';
+        isServiceRunning = false;
       });
-      return false;
+      return;
     }
 
     // Request background location permission
     final backgroundStatus = await Permission.locationAlways.request();
     if (!backgroundStatus.isGranted) {
       setState(() {
-        locationInfo = 'Background location permission is required';
+        isServiceRunning = false;
       });
-      return false;
+      return;
     }
 
     // Open app settings if any permission is permanently denied
@@ -206,88 +119,45 @@ class _MyHomePageState extends State<MyHomePage> {
         await Permission.activityRecognition.isPermanentlyDenied ||
         await Permission.notification.isPermanentlyDenied) {
       setState(() {
-        locationInfo = 'Please enable permissions in app settings';
+        isServiceRunning = false;
       });
       await openAppSettings();
-      return false;
+      return;
     }
-
-    return true;
   }
 
   @override
-  void dispose() {
-    locationSubscription?.cancel();
-    activitySubscription?.cancel();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _requestPermissions();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Location & Activity Tracker'),
+        title: const Text('Location Activity Tracking'),
       ),
       body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    children: [
-                      const Text(
-                        'Location Updates',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(locationInfo),
-                    ],
-                  ),
-                ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              isServiceRunning ? 'Service is Running' : 'Service is Stopped',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: toggleService,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
               ),
-              const SizedBox(height: 16),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    children: [
-                      const Text(
-                        'Activity Updates',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(activityInfo),
-                    ],
-                  ),
-                ),
+              child: Text(
+                isServiceRunning ? 'Stop Service' : 'Start Service',
+                style: const TextStyle(fontSize: 18),
               ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: isServiceRunning
-                    ? _stopLocationService
-                    : _startLocationService,
-                child:
-                    Text(isServiceRunning ? 'Stop Tracking' : 'Start Tracking'),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () {
-                  _setUserData();
-                },
-                child: Text("Set User Data"),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

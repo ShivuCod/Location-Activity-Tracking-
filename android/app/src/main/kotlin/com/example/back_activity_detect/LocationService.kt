@@ -1,26 +1,45 @@
 package com.example.back_activity_detect
 
-import android.app.Service
-import android.content.Intent
-import android.os.IBinder
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.os.Build
-import androidx.core.app.NotificationCompat
+import android.app.PendingIntent
+import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import android.content.Context
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
 import android.content.pm.ServiceInfo
 import android.util.Log
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.ActivityRecognition
 import com.google.android.gms.location.ActivityRecognitionClient
 import com.google.android.gms.location.ActivityTransition
 import com.google.android.gms.location.ActivityTransitionRequest
 import com.google.android.gms.location.ActivityTransitionResult
 import com.google.android.gms.location.DetectedActivity
-import android.app.PendingIntent
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.json.JSONObject
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class LocationService : Service() {
     private var locationManager: LocationManager? = null
@@ -30,21 +49,136 @@ class LocationService : Service() {
     private var activityRecognitionClient: ActivityRecognitionClient? = null
     private var activityTransitionPendingIntent: PendingIntent? = null
     private var isActivityRecognitionSetup = false
+    private lateinit var sharedPreferences: SharedPreferences
+    private val permissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "android.location.PROVIDERS_CHANGED" ||
+                intent?.action == "android.location.MODE_CHANGED") {
+                checkAndHandlePermissions()
+            }
+        }
+    }
+
+    private val RESTART_DELAY = 1000L // 1 second delay for restart
+    private val handler = Handler(Looper.getMainLooper())
+    private val restartRunnable = Runnable {
+        startForegroundService()
+    }
 
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate: Starting LocationService")
-        if (!checkPermissions()) {
-            Log.e(TAG, "onCreate: Missing permissions")
-            stopSelf()
-            return
+        sharedPreferences = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+        
+        // Register for permission changes
+        val filter = IntentFilter().apply {
+            addAction("android.location.PROVIDERS_CHANGED")
+            addAction("android.location.MODE_CHANGED")
         }
-
+        registerReceiver(permissionReceiver, filter)
+        
         createNotificationChannel()
-        startForegroundService()
         
         // Start both location and activity recognition
         initializeServices()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // Schedule a restart
+        handler.postDelayed(restartRunnable, RESTART_DELAY)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        
+        // Get credentials from intent if available
+        intent?.getStringExtra("credentials")?.let { credentialsString ->
+            try {
+                val credentialsJson = JSONObject(credentialsString)
+                // Store credentials in SharedPreferences
+                with(sharedPreferences.edit()) {
+                    putString("flutter.credentials", credentialsString)
+                    apply()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse credentials", e)
+            }
+        }
+
+        // Start the service
+        startForegroundService()
+        
+        // If service gets killed, restart it
+        return START_STICKY
+    }
+
+    private fun checkAndHandlePermissions() {
+        val hasLocationPermission = ActivityCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val hasActivityRecognitionPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ActivityCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.ACTIVITY_RECOGNITION
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+
+        if (!hasLocationPermission || !hasActivityRecognitionPermission) {
+            // Create outage activity JSON
+            val outageData = JSONObject().apply {
+                put("activity", "Outage")
+                put("time", SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date()))
+                put("date", SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()))
+                put("description", if (!hasLocationPermission && !hasActivityRecognitionPermission) {
+                    "User Removed Location and Activity Recognition Permissions"
+                } else if (!hasLocationPermission) {
+                    "User Removed Location Permission"
+                } else {
+                    "User Removed Activity Recognition Permission"
+                })
+            }
+
+            // Send to server
+            val host = sharedPreferences.getString("host", null)
+            val accessToken = sharedPreferences.getString("accessToken", null)
+            
+            if (host != null && accessToken != null) {
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val requestBody = outageData.toString().toRequestBody(mediaType)
+                val url = "$host/api/activities/add"
+                
+                val request = Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .header("Authorization", "Bearer $accessToken")
+                    .header("Content-Type", "application/json")
+                    .build()
+
+                OkHttpClient().newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        Log.e(TAG, "Failed to send outage activity: ${e.message}")
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        response.use {
+                            if (it.isSuccessful) {
+                                Log.d(TAG, "Outage activity sent successfully")
+                            } else {
+                                Log.e(TAG, "Failed to send outage activity. Response code: ${it.code}")
+                            }
+                        }
+                    }
+                })
+            }
+
+            // Stop the service
+            stopSelf()
+        }
     }
 
     private fun initializeServices() {
@@ -175,21 +309,20 @@ class LocationService : Service() {
     }
 
     private fun startForegroundService() {
-        Log.d(TAG, "startForegroundService: Starting foreground service")
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    createNotification(),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, createNotification())
-            }
-            Log.d(TAG, "startForegroundService: Service started successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "startForegroundService: Failed to start service", e)
-            stopSelf()
+        val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Location Tracking")
+            .setContentText("Tracking your location...")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notificationBuilder.build(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notificationBuilder.build())
         }
     }
 
@@ -211,7 +344,7 @@ class LocationService : Service() {
             }
 
             val minTimeMs = 1000L  // 1 second
-            val minDistanceM = 2f   // 2 meters
+            val minDistanceM = 0f   // 2 meters
 
             var providersEnabled = false
 
@@ -286,16 +419,17 @@ class LocationService : Service() {
             }
         }
 
-        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {
-            Log.d(TAG, "onStatusChanged: Provider: $provider, Status: $status")
-        }
-
         override fun onProviderEnabled(provider: String) {
             Log.d(TAG, "onProviderEnabled: $provider")
         }
 
         override fun onProviderDisabled(provider: String) {
             Log.d(TAG, "onProviderDisabled: $provider")
+            checkAndHandlePermissions()
+        }
+
+        override fun onStatusChanged(provider: String, status: Int, extras: Bundle) {
+            Log.d(TAG, "onStatusChanged: $provider, status: $status")
         }
     }
 
@@ -338,6 +472,27 @@ class LocationService : Service() {
                     }
             } catch (e: Exception) {
                 Log.e(TAG, "Error removing activity recognition updates", e)
+            }
+        }
+        
+        try {
+            unregisterReceiver(permissionReceiver)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering receiver: ${e.message}")
+        }
+        
+        // Schedule a restart if not explicitly stopped
+        val preferences = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+        if (preferences.getBoolean("flutter.service_should_run", false)) {
+            val intent = Intent(applicationContext, LocationService::class.java)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to restart service", e)
             }
         }
     }
