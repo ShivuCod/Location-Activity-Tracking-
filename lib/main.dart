@@ -30,7 +30,7 @@ class _MyHomePageState extends State<MyHomePage> {
   static const methodChannel = MethodChannel('com.test');
   static const locationEventChannel = EventChannel('com.test/location_updates');
   static const activityEventChannel = EventChannel('com.test/activity_updates');
-  
+
   String locationInfo = 'No location updates';
   String activityInfo = 'No activity detected';
   bool isServiceRunning = false;
@@ -47,15 +47,15 @@ class _MyHomePageState extends State<MyHomePage> {
       locationSubscription?.cancel();
       activitySubscription?.cancel();
 
-      locationSubscription = locationEventChannel
-          .receiveBroadcastStream()
-          .listen((dynamic event) {
+      locationSubscription =
+          locationEventChannel.receiveBroadcastStream().listen((dynamic event) {
         setState(() {
           if (event is Map && event.containsKey('error')) {
             locationInfo = 'Error: ${event['error']}';
             debugPrint('Location error: ${event['error']}');
           } else {
-            locationInfo = 'Location: ${event['latitude']}, ${event['longitude']}\n'
+            locationInfo =
+                'Location: ${event['latitude']}, ${event['longitude']}\n'
                 'Accuracy: ${event['accuracy']} meters\n'
                 'Speed: ${event['speed']} m/s\n'
                 'Time: ${DateTime.fromMillisecondsSinceEpoch(event['time'] as int)}';
@@ -69,9 +69,8 @@ class _MyHomePageState extends State<MyHomePage> {
         debugPrint('Error in location stream: $error');
       });
 
-      activitySubscription = activityEventChannel
-          .receiveBroadcastStream()
-          .listen((dynamic event) {
+      activitySubscription =
+          activityEventChannel.receiveBroadcastStream().listen((dynamic event) {
         setState(() {
           activityInfo = 'Activity: ${event['activityType']}\n'
               'Time: ${DateTime.fromMillisecondsSinceEpoch(event['time'] as int)}';
@@ -135,6 +134,24 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  Future<void> _setUserData() async {
+    try {
+      await methodChannel.invokeMethod('userData', {
+        "orgId": 386,
+        "empId": 8,
+        "accessToken":
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1lIjoiODIwMDI3MzIyNCIsImp0aSI6ImNiMmUyNmFmLTM0NmQtNDYxNy05MDRjLWUxZWFjZTM1MmVhYiIsImh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vd3MvMjAwOC8wNi9pZGVudGl0eS9jbGFpbXMvcm9sZSI6IlVzZXIiLCJleHAiOjE3Mzk0NDE5MzEsImlzcyI6Imh0dHBzOi8vaHVtYW5lYy5haS8iLCJhdWQiOiJodHRwOi8vMTI3LjAuMC4xOjgwMDAvIn0.-yOMq89tVvxL5esH7Dy9wd5FVKkaBAOwTLCTCrCPGcY",
+        "refreshToken":"vOshkO5pEQsNDgXIzPpLvTrOeMPd4I/o5EtfkiipPpU=",
+        "img": "",
+        "name": "Faizal Khalifa",
+        "host": "https://api.geo.humanec.ai"
+      });
+      debugPrint('User data set successfully');
+    } catch (e) {
+      debugPrint("Failed to set user data: ${e.toString()}");
+    }
+  }
+
   Future<bool> _requestPermissions() async {
     // First check if location services are enabled
     if (!await Permission.locationWhenInUse.serviceStatus.isEnabled) {
@@ -165,7 +182,7 @@ class _MyHomePageState extends State<MyHomePage> {
         return false;
       }
     }
-    
+
     // Request location permissions
     final locationStatus = await Permission.locationWhenInUse.request();
     if (!locationStatus.isGranted) {
@@ -211,54 +228,66 @@ class _MyHomePageState extends State<MyHomePage> {
       appBar: AppBar(
         title: const Text('Location & Activity Tracker'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    const Text(
-                      'Location Updates',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Location Updates',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(locationInfo),
-                  ],
+                      const SizedBox(height: 8),
+                      Text(locationInfo),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    const Text(
-                      'Activity Updates',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Activity Updates',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(activityInfo),
-                  ],
+                      const SizedBox(height: 8),
+                      Text(activityInfo),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: isServiceRunning ? _stopLocationService : _startLocationService,
-              child: Text(isServiceRunning ? 'Stop Tracking' : 'Start Tracking'),
-            ),
-          ],
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: isServiceRunning
+                    ? _stopLocationService
+                    : _startLocationService,
+                child:
+                    Text(isServiceRunning ? 'Stop Tracking' : 'Start Tracking'),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () {
+                  _setUserData();
+                },
+                child: Text("Set User Data"),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -77,10 +77,6 @@ class LocationService : Service() {
                     .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
                     .build(),
                 ActivityTransition.Builder()
-                    .setActivityType(DetectedActivity.RUNNING)
-                    .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
-                    .build(),
-                ActivityTransition.Builder()
                     .setActivityType(DetectedActivity.IN_VEHICLE)
                     .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
                     .build()
@@ -215,7 +211,7 @@ class LocationService : Service() {
             }
 
             val minTimeMs = 1000L  // 1 second
-            val minDistanceM = 0f   // 0 meters
+            val minDistanceM = 2f   // 2 meters
 
             var providersEnabled = false
 
@@ -268,12 +264,15 @@ class LocationService : Service() {
 
     private val locationListener: LocationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            Log.d(TAG, "onLocationChanged: Lat: ${location.latitude}, Lng: ${location.longitude}")
+            val formattedLat = String.format("%.6f", location.latitude).toDouble()
+            val formattedLng = String.format("%.6f", location.longitude).toDouble()
+            
+            Log.d(TAG, "onLocationChanged: Lat: $formattedLat, Lng: $formattedLng")
             
             val intent = Intent("location_update").apply {
                 setPackage(packageName)
-                putExtra("latitude", location.latitude)
-                putExtra("longitude", location.longitude)
+                putExtra("latitude", formattedLat)
+                putExtra("longitude", formattedLng)
                 putExtra("accuracy", location.accuracy)
                 putExtra("speed", location.speed)
                 putExtra("time", location.time)
