@@ -1,0 +1,345 @@
+package com.example.back_activity_detect
+
+import android.app.Service
+import android.content.Intent
+import android.os.IBinder
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.content.Context
+import android.os.Bundle
+import android.content.pm.ServiceInfo
+import android.util.Log
+import com.google.android.gms.location.ActivityRecognition
+import com.google.android.gms.location.ActivityRecognitionClient
+import com.google.android.gms.location.ActivityTransition
+import com.google.android.gms.location.ActivityTransitionRequest
+import com.google.android.gms.location.ActivityTransitionResult
+import com.google.android.gms.location.DetectedActivity
+import android.app.PendingIntent
+
+class LocationService : Service() {
+    private var locationManager: LocationManager? = null
+    private val CHANNEL_ID = "LocationServiceChannel"
+    private val NOTIFICATION_ID = 1
+    private val TAG = "LocationService"
+    private var activityRecognitionClient: ActivityRecognitionClient? = null
+    private var activityTransitionPendingIntent: PendingIntent? = null
+    private var isActivityRecognitionSetup = false
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "onCreate: Starting LocationService")
+        if (!checkPermissions()) {
+            Log.e(TAG, "onCreate: Missing permissions")
+            stopSelf()
+            return
+        }
+
+        createNotificationChannel()
+        startForegroundService()
+        
+        // Start both location and activity recognition
+        initializeServices()
+    }
+
+    private fun initializeServices() {
+        try {
+            // First setup activity recognition
+            setupActivityRecognition()
+            
+            // Then start location updates
+            startLocationUpdates()
+            
+            Log.d(TAG, "Successfully initialized both location and activity recognition services")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing services", e)
+            stopSelf()
+        }
+    }
+
+    private fun setupActivityRecognition() {
+        try {
+            Log.d(TAG, "Setting up activity recognition")
+            activityRecognitionClient = ActivityRecognition.getClient(this)
+            
+            val transitions = listOf(
+                ActivityTransition.Builder()
+                    .setActivityType(DetectedActivity.STILL)
+                    .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
+                    .build(),
+                ActivityTransition.Builder()
+                    .setActivityType(DetectedActivity.WALKING)
+                    .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
+                    .build(),
+                ActivityTransition.Builder()
+                    .setActivityType(DetectedActivity.RUNNING)
+                    .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
+                    .build(),
+                ActivityTransition.Builder()
+                    .setActivityType(DetectedActivity.IN_VEHICLE)
+                    .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
+                    .build()
+            )
+
+            val request = ActivityTransitionRequest(transitions)
+            Log.d(TAG, "Created activity transition request")
+            
+            val intent = Intent("activity_transition_update")
+            intent.setPackage(packageName)
+            
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            
+            activityTransitionPendingIntent = PendingIntent.getBroadcast(
+                this, 0, intent, flags
+            )
+            Log.d(TAG, "Created pending intent for activity updates")
+
+            activityRecognitionClient?.requestActivityTransitionUpdates(
+                request, activityTransitionPendingIntent!!
+            )?.addOnSuccessListener {
+                Log.d(TAG, "Successfully registered for activity updates")
+                isActivityRecognitionSetup = true
+                
+                // Also request activity updates (not just transitions)
+                requestActivityUpdates()
+            }?.addOnFailureListener { e ->
+                Log.e(TAG, "Failed to register for activity updates", e)
+                isActivityRecognitionSetup = false
+                stopSelf()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting up activity recognition", e)
+            isActivityRecognitionSetup = false
+            stopSelf()
+        }
+    }
+
+    private fun requestActivityUpdates() {
+        try {
+            val intent = Intent("activity_update")
+            intent.setPackage(packageName)
+            
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            
+            val activityPendingIntent = PendingIntent.getBroadcast(
+                this, 1, intent, flags
+            )
+
+            activityRecognitionClient?.requestActivityUpdates(
+                0, // detectionIntervalMillis (0 for as fast as possible)
+                activityPendingIntent
+            )?.addOnSuccessListener {
+                Log.d(TAG, "Successfully registered for regular activity updates")
+            }?.addOnFailureListener { e ->
+                Log.e(TAG, "Failed to register for regular activity updates", e)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error requesting activity updates", e)
+        }
+    }
+
+    private fun checkPermissions(): Boolean {
+        val hasLocationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            hasPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) &&
+            hasPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) &&
+            hasPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) &&
+            hasPermission(android.Manifest.permission.ACTIVITY_RECOGNITION)
+        } else {
+            hasPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) &&
+            hasPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+
+        val hasForegroundServicePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            hasPermission(android.Manifest.permission.FOREGROUND_SERVICE_LOCATION)
+        } else {
+            true
+        }
+
+        Log.d(TAG, "checkPermissions: Location permissions: $hasLocationPermission")
+        Log.d(TAG, "checkPermissions: Foreground service permission: $hasForegroundServicePermission")
+        
+        return hasLocationPermission && hasForegroundServicePermission
+    }
+
+    private fun hasPermission(permission: String): Boolean {
+        return checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun startForegroundService() {
+        Log.d(TAG, "startForegroundService: Starting foreground service")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    createNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, createNotification())
+            }
+            Log.d(TAG, "startForegroundService: Service started successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "startForegroundService: Failed to start service", e)
+            stopSelf()
+        }
+    }
+
+    private fun startLocationUpdates() {
+        Log.d(TAG, "startLocationUpdates: Requesting location updates")
+        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        try {
+            // Try to get last known location first
+            try {
+                val lastLocation = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                if (lastLocation != null) {
+                    Log.d(TAG, "Got last known location: ${lastLocation.latitude}, ${lastLocation.longitude}")
+                    locationListener.onLocationChanged(lastLocation)
+                } else {
+                    Log.d(TAG, "No last known location available")
+                }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Error getting last known location", e)
+            }
+
+            val minTimeMs = 1000L  // 1 second
+            val minDistanceM = 0f   // 0 meters
+
+            var providersEnabled = false
+
+            if (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) {
+                Log.d(TAG, "Requesting GPS updates")
+                locationManager?.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    minTimeMs,
+                    minDistanceM,
+                    locationListener
+                )
+                providersEnabled = true
+            } else {
+                Log.w(TAG, "GPS provider is not enabled")
+            }
+            
+            if (locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true) {
+                Log.d(TAG, "Requesting Network updates")
+                locationManager?.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    minTimeMs,
+                    minDistanceM,
+                    locationListener
+                )
+                providersEnabled = true
+            } else {
+                Log.w(TAG, "Network provider is not enabled")
+            }
+
+            if (!providersEnabled) {
+                Log.e(TAG, "No location providers are enabled!")
+                // Send a broadcast to inform the UI
+                val intent = Intent("location_update").apply {
+                    setPackage(packageName)
+                    putExtra("error", "No location providers are enabled")
+                }
+                sendBroadcast(intent)
+            }
+        } catch (ex: SecurityException) {
+            Log.e(TAG, "SecurityException while requesting location updates", ex)
+            // Send a broadcast to inform the UI
+            val intent = Intent("location_update").apply {
+                setPackage(packageName)
+                putExtra("error", "Location permission denied")
+            }
+            sendBroadcast(intent)
+            stopSelf()
+        }
+    }
+
+    private val locationListener: LocationListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            Log.d(TAG, "onLocationChanged: Lat: ${location.latitude}, Lng: ${location.longitude}")
+            
+            val intent = Intent("location_update").apply {
+                setPackage(packageName)
+                putExtra("latitude", location.latitude)
+                putExtra("longitude", location.longitude)
+                putExtra("accuracy", location.accuracy)
+                putExtra("speed", location.speed)
+                putExtra("time", location.time)
+            }
+            
+            try {
+                sendBroadcast(intent)
+                Log.d(TAG, "onLocationChanged: Broadcast sent successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "onLocationChanged: Failed to send broadcast", e)
+            }
+        }
+
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {
+            Log.d(TAG, "onStatusChanged: Provider: $provider, Status: $status")
+        }
+
+        override fun onProviderEnabled(provider: String) {
+            Log.d(TAG, "onProviderEnabled: $provider")
+        }
+
+        override fun onProviderDisabled(provider: String) {
+            Log.d(TAG, "onProviderDisabled: $provider")
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val serviceChannel = NotificationChannel(
+                CHANNEL_ID,
+                "Location Service Channel",
+                NotificationManager.IMPORTANCE_DEFAULT
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(serviceChannel)
+        }
+    }
+
+    private fun createNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
+        .setContentTitle("Location Service")
+        .setContentText("Tracking location and activity...")
+        .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+        .setOngoing(true)
+        .setCategory(NotificationCompat.CATEGORY_SERVICE)
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .build()
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "onDestroy: Stopping location updates")
+        locationManager?.removeUpdates(locationListener)
+        
+        if (isActivityRecognitionSetup && activityRecognitionClient != null && activityTransitionPendingIntent != null) {
+            try {
+                activityRecognitionClient?.removeActivityTransitionUpdates(activityTransitionPendingIntent!!)
+                    ?.addOnSuccessListener {
+                        Log.d(TAG, "Successfully removed activity updates")
+                    }
+                    ?.addOnFailureListener { e ->
+                        Log.e(TAG, "Failed to remove activity updates", e)
+                    }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error removing activity recognition updates", e)
+            }
+        }
+    }
+}
